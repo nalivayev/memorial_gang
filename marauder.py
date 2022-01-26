@@ -287,6 +287,13 @@ class MultiMarauder:
             v_marauder = Marauder()
             v_marauder.do(p_thread_logger, p_thread_id, p_thread_skip, p_thread_count, p_thread_group_count, p_thread_flow_count, p_thread_flow_id, True)
 
-        for v_i in range(p_flow_count):
-            v_thread = Thread(target=do_in_thread, args=(p_logger, p_id + v_i, p_skip, p_count, p_group_count, p_flow_count, chr(ord("A") + v_i)))
+        if p_flow_count:
+            if p_flow_count > 0:
+                v_flow_count = p_flow_count
+            else:
+                raise MarauderException
+        else:
+            v_flow_count = 1
+        for v_i in range(v_flow_count):
+            v_thread = Thread(target=do_in_thread, args=(p_logger, p_id + v_i, p_skip, p_count, p_group_count, v_flow_count, chr(ord("A") + v_i)))
             v_thread.start()
