@@ -8,12 +8,44 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver import Firefox
 from argparse import ArgumentParser
 from threading import Thread
+from random import choice
 from typing import Any
 
 import datetime
 import logging
 import shutil
 import os
+
+
+class GangsterLogger:
+
+    __logger: logging.Logger
+
+    def __init__(self):
+        self.__logger = logging.getLogger("marauder")
+        self.__logger.setLevel(logging.INFO)
+        v_formatter = logging.Formatter("%(asctime)s.%(msecs)03d %(message)s", datefmt="%Y.%m.%d %H:%M:%S")
+        v_handler = logging.FileHandler(f"{os.path.splitext(__file__)[0]}.log", mode="w")
+        v_handler.setFormatter(v_formatter)
+        self.__logger.addHandler(v_handler)
+        v_handler = logging.StreamHandler()
+        v_handler.setFormatter(v_formatter)
+        self.__logger.addHandler(v_handler)
+
+    def info(self, p_message: str) -> None:
+        self.__logger.info(p_message)
+
+
+class Gangster:
+
+    __logger: GangsterLogger = None
+
+    def __init__(self, p_logger: GangsterLogger = None):
+        self.__logger = p_logger
+
+    def log(self, p_message):
+        if self.__logger is not None:
+            self.__logger.info(p_message)
 
 
 class MarauderException(Exception):
@@ -31,7 +63,7 @@ class MarauderParser(ArgumentParser):
         self.add_argument("-s", "--skip", type=bool, help="skip existing files")
         self.add_argument("-c", "--count", type=int, help="count of files")
         self.add_argument("-gc", "--groupcount", type=int, help="count of files in group")
-        self.add_argument("-ga", "--groupaligment", type=bool, help="align directories by group")
+        self.add_argument("-ga", "--groupalignment", default=False, action='store_true', help="align directories by group")
         self.add_argument("-fc", "--flowcount", type=int, help="count of download flow")
         self.add_argument("-st", "--step", type=int, help="step between identifiers")
 
@@ -53,36 +85,19 @@ class MarauderParser(ArgumentParser):
         return v_result
 
 
-class MarauderLogger:
+class Marauder(Gangster):
 
-    __logger: logging.Logger
-
-    def __init__(self):
-        self.__logger = logging.getLogger("marauder")
-        self.__logger.setLevel(logging.INFO)
-        v_formatter = logging.Formatter("%(asctime)s.%(msecs)03d %(message)s", datefmt="%Y.%m.%d %H:%M:%S")
-        v_handler = logging.FileHandler(f"{os.path.splitext(__file__)[0]}.log", mode="w")
-        v_handler.setFormatter(v_formatter)
-        self.__logger.addHandler(v_handler)
-        v_handler = logging.StreamHandler()
-        v_handler.setFormatter(v_formatter)
-        self.__logger.addHandler(v_handler)
-
-    def info(self, p_message: str) -> None:
-        self.__logger.info(p_message)
-
-
-class Marauder:
-
-    __URL = "https://obd-memorial.ru/html/search.htm?f=галочкин&n=иван&s=михайлович"
     __EXTENSIONS = ["jpg", "JPG", "jpeg", "JPEG", "png", "PNG", "bmp", "BMP"]
+    __PROXY_URL_TEMPLATE = "https://obd-memorial.ru/html/search.htm?n={name}&s={patronymic}&f={family}"
+    __PROXY_URL_NAMES = ["Иван", "Дмитрий", "Сергей", "Андрей", "Михаил", "Василий", "Николай", "Петр", "Александр"]
+    __PROXY_URL_PATRONYMICS = ["Иванович", "Дмитриевич", "Сергеевич", "Андреевич", "Михайлович", "Васильевич", "Николаевич", "Петрович", "Александрович"]
+    __PROXY_URL_FAMILIES = ["Иванов", "Смирнов", "Кузнецов"]
     __PROXY_ELEMENT_ID_DOWNLOAD_XPATH = "//span[@id_download='{id}']"
     __PROXY_ELEMENT_CLASS_XPATH = "//span[@class='searchResultDownload']"
     __LOAD_TIMEOUT = 30
     __RESTART_COUNT = 10
 
     __driver: Firefox = None
-    __logger: MarauderLogger = None
     __element: WebElement = None
     __id: int = 0
     __skip: bool = False
@@ -98,9 +113,8 @@ class Marauder:
     def __make_root_name():
         return os.path.dirname(os.path.realpath(__file__))
 
-    def __add_log_message(self, p_message):
-        if self.__logger is not None:
-            self.__logger.info(p_message)
+    def __get_proxy_url(self):
+        return self.__PROXY_URL_TEMPLATE.format(name=choice(self.__PROXY_URL_NAMES), patronymic=choice(self.__PROXY_URL_PATRONYMICS), family=choice(self.__PROXY_URL_FAMILIES))
 
     def __make_path_name(self, p_id):
         if self.__id:
@@ -131,10 +145,13 @@ class Marauder:
         return v_result
 
     def __start_new_session(self):
-        self.__add_log_message(f"{self.__flow_id} Start new browser session")
+        super().log(f"{self.__flow_id} Start new browser session")
         v_path = self.__make_temporary_path_name()
         if not os.path.exists(v_path):
-            os.makedirs(v_path)
+            try:
+                os.makedirs(v_path)
+            except Exception:
+                pass
         v_profile = FirefoxProfile()
         v_profile.set_preference("browser.download.panel.shown", False)
         v_profile.set_preference("browser.helperApps.neverAsk.openFile", "image/jpeg")
@@ -144,11 +161,6 @@ class Marauder:
         v_options = Options()
         v_options.add_argument("--headless")
         self.__driver = Firefox(firefox_options=v_options, firefox_profile=v_profile)
-        self.__driver.get(self.__URL)
-        WebDriverWait(self.__driver, self.__LOAD_TIMEOUT).until(element_to_be_clickable((By.XPATH, self.__PROXY_ELEMENT_CLASS_XPATH)))
-        self.__element = self.__driver.find_element_by_xpath(self.__PROXY_ELEMENT_CLASS_XPATH)
-        if not self.__element:
-            raise NoSuchElementException
 
     def __remove_temporary_path(self):
         v_path = self.__make_temporary_path_name()
@@ -156,22 +168,21 @@ class Marauder:
             try:
                 shutil.rmtree(v_path, ignore_errors=True)
             except Exception:
-                self.__add_log_message(f"{self.__flow_id} Error while remove temporary folder")
+                super().log(f"{self.__flow_id} Error while remove temporary folder")
 
     def __restart(self):
-        self.__add_log_message(f"{self.__flow_id} Restart marauding")
+        super().log(f"{self.__flow_id} Restart marauding")
         if self.__driver:
             self.__driver.quit()
-        # self.__remove_temporary_path()
         if self.__restart_count < self.__RESTART_COUNT:
             self.__restart_count += 1
             try:
                 self.__start_new_session()
             except Exception:
-                self.__add_log_message(f"{self.__flow_id} Error while start browser session")
+                super().log(f"{self.__flow_id} Error while start browser session")
                 raise MarauderException
         else:
-            self.__add_log_message(f"{self.__flow_id} Error while restart - restart count exceed")
+            super().log(f"{self.__flow_id} Error while restart - restart count exceed")
             raise MarauderException
 
     def __check_list(self):
@@ -188,18 +199,18 @@ class Marauder:
                         try:
                             shutil.move(v_from_name, os.path.join(v_to_path_name, f"{v_item['id']}.{v_extension}"))
                         except Exception:
-                            self.__add_log_message(f"{self.__flow_id} {v_item['id']} Error copying file")
+                            super().log(f"{self.__flow_id} {v_item['id']} Error copying file")
                         else:
                             v_loading = True
                             break
                 if v_loading:
-                    self.__add_log_message(f"{self.__flow_id} {v_item['id']} Loading complete")
+                    super().log(f"{self.__flow_id} {v_item['id']} Loading complete")
                 else:
-                    self.__add_log_message(f"{self.__flow_id} {v_item['id']} Not found")
+                    super().log(f"{self.__flow_id} {v_item['id']} Not found")
                 self.__list.pop(0)
 
-    def do(self, p_logger: MarauderLogger, p_id: int = 1, p_skip: bool = False, p_count: int = None, p_group_count: int = None, p_step: int = None, p_flow_id: str = None, p_group_alignment: bool = False):
-        self.__logger = p_logger
+    def do(self, p_logger: GangsterLogger = None, p_id: int = 1, p_skip: bool = False, p_count: int = None, p_group_count: int = None, p_step: int = None, p_flow_id: str = None, p_group_alignment: bool = False):
+        super().__init__(p_logger)
         self.__id = p_id
         self.__skip = p_skip
         self.__group_alignment = p_group_alignment
@@ -210,32 +221,32 @@ class Marauder:
         if p_id and p_id > 0:
             self.__id = p_id
         else:
-            self.__add_log_message(f"{self.__flow_id} Incorrect id value, execution aborted")
+            super().log(f"{self.__flow_id} Incorrect id value, execution aborted")
             raise MarauderException
         if p_count:
             if p_count >= 0:
                 self.__count = p_count
             else:
-                self.__add_log_message(f"{self.__flow_id} Incorrect count value, execution aborted")
+                super().log(f"{self.__flow_id} Incorrect count value, execution aborted")
                 raise MarauderException
         if p_group_count:
             if p_group_count > 0:
                 self.__group_count = p_group_count
             else:
-                self.__add_log_message(f"{self.__flow_id} Incorrect group count value, execution aborted")
+                super().log(f"{self.__flow_id} Incorrect group count value, execution aborted")
                 raise MarauderException
         if p_step:
             if p_step > 0:
                 self.__step = p_step
             else:
-                self.__add_log_message(f"{self.__flow_id} Incorrect step value, execution aborted")
+                super().log(f"{self.__flow_id} Incorrect step value, execution aborted")
                 raise MarauderException
         else:
             self.__step = 1
         try:
             self.__start_new_session()
         except Exception:
-            self.__add_log_message(f"{self.__flow_id} Error while start browser session")
+            super().log(f"{self.__flow_id} Error while start browser session")
             raise
         else:
             v_id = self.__id
@@ -244,20 +255,25 @@ class Marauder:
                 if self.__count and v_id >= self.__id + self.__count:
                     break
                 if self.__skip and self.__check_for_existence(v_id):
-                    self.__add_log_message(f"{self.__flow_id} {v_id} File already exists - skip loading")
+                    super().log(f"{self.__flow_id} {v_id} File already exists - skip loading")
                 else:
                     v_restart = False
                     try:
+                        self.__driver.get(self.__get_proxy_url())
+                        WebDriverWait(self.__driver, self.__LOAD_TIMEOUT).until(element_to_be_clickable((By.XPATH, self.__PROXY_ELEMENT_CLASS_XPATH)))
+                        self.__element = self.__driver.find_element_by_xpath(self.__PROXY_ELEMENT_CLASS_XPATH)
+                        if not self.__element:
+                            raise NoSuchElementException
                         self.__driver.execute_script("arguments[0].setAttribute('id_download', arguments[1]);", self.__element, v_id)
                         WebDriverWait(self.__driver, self.__LOAD_TIMEOUT).until(element_to_be_clickable((By.XPATH, self.__PROXY_ELEMENT_ID_DOWNLOAD_XPATH.format(id=v_id))))
                     except (TimeoutException, NoSuchElementException):
-                        self.__add_log_message(f"{self.__flow_id} {v_id} Error while proxy element search")
+                        super().log(f"{self.__flow_id} {v_id} Error while proxy element search")
                         v_restart = True
                     else:
                         try:
                             self.__element.click()
                         except ElementClickInterceptedException:
-                            self.__add_log_message(f"{self.__flow_id} {v_id} Error while proxy element clicking")
+                            super().log(f"{self.__flow_id} {v_id} Error while proxy element clicking")
                             v_restart = True
                         else:
                             self.__list.append({"id": v_id, "moment": datetime.datetime.now()})
@@ -270,18 +286,18 @@ class Marauder:
                 self.__check_list()
                 self.__restart_count = 0
                 v_id += self.__step
-            if self.__driver:
-                self.__driver.quit()
-                self.__add_log_message(f"{self.__flow_id} Close browser session")
             while len(self.__list) > 0:
                 self.__check_list()
+            if self.__driver:
+                self.__driver.quit()
+                super().log(f"{self.__flow_id} Close browser session")
             self.__remove_temporary_path()
 
 
 class MultiMarauder:
 
     @staticmethod
-    def do(p_logger: MarauderLogger, p_id: int, p_skip: bool, p_count: int, p_group_count: int, p_flow_count: int):
+    def do(p_logger: GangsterLogger, p_id: int, p_skip: bool, p_count: int, p_group_count: int, p_flow_count: int):
 
         def do_in_thread(p_thread_logger, p_thread_id, p_thread_skip, p_thread_count, p_thread_group_count, p_thread_flow_count, p_thread_flow_id):
             v_marauder = Marauder()
