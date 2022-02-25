@@ -1,10 +1,10 @@
-from marauder import Marauder, MultiMarauder, MarauderParser, MarauderLogger
+from marauder import MultiMarauder, MarauderParser, GangsterLogger
 
 
 def main():
     v_parser = MarauderParser()
     v_args = v_parser.parse_args()
-    v_logger = MarauderLogger()
+    v_logger = GangsterLogger()
     v_marauder = MultiMarauder()
     try:
         v_marauder.do(v_logger, v_args.id, v_args.skip, v_args.count, v_args.groupcount, v_args.flowcount)
